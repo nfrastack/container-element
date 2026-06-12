@@ -1,4 +1,6 @@
-#!/command/with-contenv bash
+# SPDX-FileCopyrightText: © 2026 Nfrastack <code@nfrastack.com>
+#
+# SPDX-License-Identifier: MIT
 
 BRAND=${BRAND:-"Element"}
 BUG_REPORT_URL=${BUG_REPORT_URL:-"https://element.io/bugreports/submit"}
@@ -48,4 +50,4 @@ MAP_STYLE_URL=${MAP_STYLE_URL:-"https://api.maptiler.com/maps/streets/style.json
 SETTINGS_SHOW_LABS=${SETTINGS_SHOW_LABS:-"TRUE"}
 SETUP_MODE=${SETUP_MODE:-"AUTO"}
 SSO_AUTO_LOGIN=${SSO_AUTO_LOGIN:-"FALSE"}
-VOIP_OBEY_ASSERTED_IDENTITY=${VOIP_OBEY_ASSERTED_IDENTITY:-"FALSE"}
+VOIP_OBEY_ASSERTED_IDENTITY=${VOIP_OBEY_ASSERTED_IDENTITY:-"FALSE"}%

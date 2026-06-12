@@ -1,5 +1,0 @@
-{
-  "{{UNIT_LISTEN_IP}}:{{UNIT_LISTEN_PORT}}": {
-    "pass": "routes"
-  }
-}

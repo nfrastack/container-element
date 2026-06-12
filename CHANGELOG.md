@@ -1,3 +1,10 @@
+## 1.0.0pre 2026-06-11 <code at nfrastack dot com>
+
+   ### Added
+      - Switch to nfrastack/container-nginx
+      - Element 1.12.21
+
+
 ## 0.6.59 2025-07-30 <dave at tiredofit dot ca>
 
    ### Added
@@ -528,5 +535,3 @@
       - Element 1.11.16
       - Alpine 3.17 (tireodfit/alpine) and Nginx 1.22.1 (tireodfit/nginx) for serving
       - Automatic generation of configuration based on environment variables
-
-

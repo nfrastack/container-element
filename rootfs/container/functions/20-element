@@ -1,20 +1,18 @@
-#!/command/with-contenv bash
+# SPDX-FileCopyrightText: © 2026 Nfrastack <code@nfrastack.com>
+#
+# SPDX-License-Identifier: MIT
 
-bootstrap_filesystem() {
-    if [ ! -d "${CONFIG_PATH}" ]; then
-        mkdir -p "${CONFIG_PATH}"
-    fi
-
-    if [ $(stat -c %U "${CONFIG_PATH}") != "${UNIT_USER}" ] ; then chown "${UNIT_USER}":"${UNIT_GROUP}" "${CONFIG_PATH}" ; fi
-    ln -sf "${CONFIG_PATH}"/"${CONFIG_FILE}" "${UNIT_WEBROOT}"/config.json
+element_bootstrap_filesystem() {
+    create_folder "${CONFIG_PATH}" "${NGINX_USER}":"${NGINX_GROUP}" 775
+    ln -sf "${CONFIG_PATH}"/"${CONFIG_FILE}" "${NGINX_WEBROOT}"/config.json
 }
 
-generate_configuration() {
+element_generate_configuration() {
     if [ "${SETUP_MODE,,}" = "auto" ] ; then
         print_debug "Automatically generating configuration based on environment variables and defaults"
 
         if  [ ! -f "${CONFIG_PATH}"/"${CONFIG_FILE}" ] ; then
-            cat <<EOF | silent sudo -u "${UNIT_USER}" tee "${CONFIG_PATH}"/"${CONFIG_FILE}"
+            write_file "${NGINX_USER}":"${NGINX_GROUP}"@"${CONFIG_PATH}"/"${CONFIG_FILE}" <<EOF
 {
     "default_server_config": {
         "m.homeserver": {

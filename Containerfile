@@ -48,6 +48,7 @@ RUN echo "" && \
                         ELEMENT_RUN_DEPS \
                         && \
     \
+    package build go buildtime && \
     package build yq && \
     \
     mkdir -p /www/html && \

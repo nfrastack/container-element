@@ -17,7 +17,7 @@ LABEL \
         org.opencontainers.image.vendor="Nfrastack <https://www.nfrastack.com>" \
         org.opencontainers.image.licenses="MIT"
 ARG \
-    ELEMENT_VERSION="v1.12.21" \
+    ELEMENT_VERSION="v1.12.18" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web"
 
 ENV \

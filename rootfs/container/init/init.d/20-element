@@ -6,11 +6,11 @@
 source /container/base/functions/container/init
 set -a
 prepare_service
-set +x
+set +a
 SERVICE_NAME="element"
-set -x
 element_bootstrap_filesystem
 element_generate_configuration
+
 custom_files "${CONTAINER_CUSTOM_PATH}" "${NGINX_WEBROOT}" "${NGINX_USER}" "${NGINX_GROUP}"
 custom_scripts
 

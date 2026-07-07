@@ -1,8 +1,8 @@
-## 1.0.0pre 2026-06-23 <code at nfrastack dot com>
+## 1.0.0pre 2026-07-07 <code at nfrastack dot com>
 
    ### Added
       - Switch to nfrastack/container-nginx
-      - Element 1.12.22
+      - Element 1.12.23
 
 
 ## 0.6.59 2025-07-30 <dave at tiredofit dot ca>

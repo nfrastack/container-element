@@ -7,9 +7,81 @@ source /container/base/functions/container/init
 set -a
 prepare_service
 set +a
+
 SERVICE_NAME="element"
 element_bootstrap_filesystem
 element_generate_configuration
+
+generate_domain_config() {
+    local in="$1"
+    local host="DOMAIN_${in}_HOST"
+    local url="DOMAIN_${in}_URL"
+    local brand="DOMAIN_${in}_BRAND"
+    local sname="DOMAIN_${in}_SERVER_NAME"
+    local permlink="DOMAIN_${in}_PERMALINK_PREFIX"
+    local wbg="DOMAIN_${in}_BRANDING_WELCOME_BG"
+    local logo="DOMAIN_${in}_BRANDING_LOGO"
+    local wurl="DOMAIN_${in}_WELCOME_URL"
+    local hurl="DOMAIN_${in}_HOME_URL"
+
+    local hv="${!host}"
+    [ -z "$hv" ] && return
+
+    local cf="${CONFIG_PATH}/config.${hv}.json"
+
+    print_debug "Generating config for ${hv}"
+
+    cp "${CONFIG_PATH}/config.json" "$cf"
+
+    yq -i '."default_server_config"."m.homeserver"."base_url" = "'"${!url}"'"' "$cf" -o json
+    yq -i '."default_server_config"."m.homeserver"."server_name" = "'"${!sname}"'"' "$cf" -o json
+    yq -i '."brand" = "'"${!brand}"'"' "$cf" -o json
+    yq -i '."permalink_prefix" = "'"${!permlink:-https://${hv}}"'"' "$cf" -o json
+
+    if [ -n "${!wbg}" ]; then
+        yq -i '."branding"."welcome_background_url" = "'"${!wbg}"'"' "$cf" -o json
+    fi
+    if [ -n "${!logo}" ]; then
+        yq -i '."branding"."auth_header_logo_url" = "'"${!logo}"'"' "$cf" -o json
+    fi
+    if [ -n "${!wurl}" ]; then
+        yq -i '."embedded_pages"."welcome_url" = "'"${!wurl}"'"' "$cf" -o json
+    fi
+    if [ -n "${!hurl}" ]; then
+        yq -i '."embedded_pages"."home_url" = "'"${!hurl}"'"' "$cf" -o json
+    fi
+
+    chown "${NGINX_USER}":"${NGINX_GROUP}" "$cf"
+
+    echo "    ${hv} /www/html/config.${hv}.json;" >> "$map"
+}
+
+count=$(printenv | sort | grep -c "^DOMAIN[0-9]._HOST")
+if [ "$count" -gt 0 ]; then
+    nsd="${NGINX_CONFIG_PATH%/}/sites.enabled/element"
+
+    map="${nsd}/server-pre/10-element-multidomain.conf"
+    write_file "root:root@${map}:644" <<EOF
+map \$host \$element_config_file {
+    default /www/html/config.default.json;
+EOF
+
+    floop "$count" generate_domain_config NIAMOD
+
+    write_file -a "root:root@${map}:644" <<EOF
+}
+EOF
+
+    location="${nsd}/server-begin/10-element-multidomain.conf"
+    write_file "root:root@${location}:644" <<EOF
+
+location = /config.json {
+    alias \$element_config_file;
+}
+EOF
+
+    print_info "Generated $(($count)) domain configs"
+fi
 
 custom_files "${CONTAINER_CUSTOM_PATH}" "${NGINX_WEBROOT}" "${NGINX_USER}" "${NGINX_GROUP}"
 custom_scripts

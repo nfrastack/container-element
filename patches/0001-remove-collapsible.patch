@@ -1,0 +1,29 @@
+From: Nfrastack <code@nfrastack.com>
+Date: Thu, 23 Jul 2026 00:00:00 +0000
+Subject: [PATCH] Fix: left panel collapses on fullscreen transition
+
+Bug: When transitioning from maximized to fullscreen in Hyprland (or any
+WM where the window briefly reports a smaller size during the transition),
+react-resizable-panels sees available space drop below minSize and
+auto-collapses the panel because the `collapsible` prop is set.
+
+The viewmodel (ResizerViewModel) still manages collapse/expand via
+separator click and double-click — removing `collapsible` from the
+Panel props just prevents auto-collapse on transient resize events.
+
+Upstream issue: When window transitions from maximized to fullscreen,
+the container briefly shrinks -> react-resizable-panels auto-collapses
+the left panel because collapsible=true.
+
+diff --git a/packages/shared-components/src/resize/panel/LeftResizablePanelView.tsx b/packages/shared-components/src/resize/panel/LeftResizablePanelView.tsx
+index 9b3ac2fe7e..4fdfb4c164 100644
+--- a/packages/shared-components/src/resize/panel/LeftResizablePanelView.tsx
++++ b/packages/shared-components/src/resize/panel/LeftResizablePanelView.tsx
+@@ -60,7 +60,6 @@ export function LeftResizablePanelView({
+             inert={isCollapsed}
+             id={LEFT_PANEL_ID}
+             className={className}
+-            collapsible
+             minSize={props.minSize}
+             maxSize={props.maxSize}
+             defaultSize={defaultSize}

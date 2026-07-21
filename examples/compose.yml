@@ -7,13 +7,25 @@ services:
       - traefik.http.routers.element.rule=Host(`element.example.com`)
       - traefik.http.services.element.loadbalancer.server.port=80
     volumes:
-      #- ./config:/config # Only if you want to use your own
       - ./logs:/logs
     environment:
       - TIMEZONE=America/Vancouver
       - CONTAINER_NAME=element-app
-
       - SETUP_TYPE=AUTO
+
+      # Single domain (default config.json)
+      - HOME_SERVER_URL=https://matrix.example.com
+      - BRAND=Element
+
+      # Multi-domain
+      # DOMAIN_01_HOST=element.example1.com
+      # DOMAIN_01_URL=https://element.example1.com
+      # DOMAIN_01_BRAND=One
+      # DOMAIN_01_SERVER_NAME=example1.com
+      # DOMAIN_02_HOST=element.example2.com
+      # DOMAIN_02_URL=https://element.example2.com
+      # DOMAIN_02_BRAND=Two
+      # DOMAIN_02_SERVER_NAME=example2.com
     networks:
       - proxy
       - services

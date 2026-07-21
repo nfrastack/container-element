@@ -16,44 +16,64 @@ LABEL \
         org.opencontainers.image.authors="Nfrastack <code@nfrastack.com>" \
         org.opencontainers.image.vendor="Nfrastack <https://www.nfrastack.com>" \
         org.opencontainers.image.licenses="MIT"
-ARG \
-    ELEMENT_VERSION="v1.12.23" \
-    ELEMENT_REPO_URL="https://github.com/element-hq/element-web"
 
-ENV \
-    IMAGE_NAME="nfrastack/element" \
-    IMAGE_REPO_URL="https://github.com/nfrastack/container-element/"
+ARG \
+    ELEMENT_VERSION="v1.12.24" \
+    ELEMENT_REPO_URL="https://github.com/element-hq/element-web"
 
 COPY CHANGELOG.md /usr/src/container/CHANGELOG.md
 COPY LICENSE /usr/src/container/LICENSE
 COPY README.md /usr/src/container/README.md
+COPY patches/* /usr/src/patches/
 
 RUN echo "" && \
     BUILD_ENV=" \
-                NGINX_SITE_ENABLED=element \
+                10-nginx/NGINX_SITE_ENABLED=element \
               " && \
     ELEMENT_BUILD_DEPS_ALPINE=" \
-                               " \
-                                    && \
+                                git \
+                                nodejs \
+                                npm \
+                                patch \
+                             " \
+                             && \
     ELEMENT_RUN_DEPS_ALPINE=" \
                             " \
                             && \
-    \
     source /container/base/functions/container/build && \
     container_build_log image && \
     package update && \
     package upgrade && \
     package install \
-                        ELEMENT_BUILD_DEPS \
-                        ELEMENT_RUN_DEPS \
-                        && \
+                    ELEMENT_BUILD_DEPS \
+                    ELEMENT_RUN_DEPS \
+                    && \
     \
-    package build go buildtime && \
-    package build yq && \
+    npm install -g pnpm && \
     \
+    clone_git_repo "${ELEMENT_REPO_URL}" "${ELEMENT_VERSION}" /usr/src/element-web && \
+    PATCH_VERS="" && \
+    for p in /usr/src/patches/*.patch; do \
+        name=$(basename $p .patch) && \
+        echo "Applying $name..." && \
+        if patch -p1 < "$p"; then \
+            echo "  OK" && \
+            PATCH_VERS="${PATCH_VERS}+${name}"; \
+        else \
+            echo "  FAILED" && \
+            PATCH_VERS="${PATCH_VERS}+${name}-FAILED"; \
+        fi; \
+    done && \
+    pnpm install && \
+    VERSION="${ELEMENT_VERSION}${PATCH_VERS}" pnpm exec nx run apps/web:build && \
     mkdir -p /www/html && \
-    curl -sSL ${ELEMENT_REPO_URL}/releases/download/${ELEMENT_VERSION}/element-${ELEMENT_VERSION}.tar.gz | tar xvfz - --strip 1 -C /www/html && \
+    cp -R apps/web/webapp/* /www/html/ && \
+    \
     container_build_log add "Element" "${ELEMENT_VERSION}" "${ELEMENT_REPO_URL}" && \
+    npm uninstall -g pnpm && \
+    package remove \
+                    ELEMENT_BUILD_DEPS \
+                    && \
     package cleanup
 
 COPY rootfs /

@@ -3,6 +3,7 @@
 ## About
 
 This repository will build a container for [Element Web](https://www.element.io), to connect to a Matrix Homeserver.
+There are custom patches applied to resolve some issues that have appeared in the recent 1.12.x series affecting usage when using Window Managers and multiple screens.
 
 ## Maintainer
 
@@ -81,9 +82,9 @@ The following directories/files should be mapped for persistent storage in order
 This image relies on a customized base image in order to work.
 Be sure to view the following repositories to understand all the customizable options:
 
-| Image                                                   | Description |
-| ------------------------------------------------------- | ----------- |
-| [OS Base](https://github.com/nfrastack/container-base/) | Base Image  |
+| Image                                                   | Description     |
+| ------------------------------------------------------- | --------------- |
+| [OS Base](https://github.com/nfrastack/container-base/) | Base Image      |
 | [Nginx](https://github.com/nfrastack/container-nginx/)  | Webserver Image |
 
 Below is the complete list of available options that can be used to customize your installation.
@@ -147,6 +148,24 @@ Below is the complete list of available options that can be used to customize yo
 | `SETTINGS_SHOW_LABS`                 |             | `TRUE`                                                                      |          |
 | `SSO_AUTO_LOGIN`                     |             | `FALSE`                                                                     |          |
 | `VOIP_OBEY_ASSERTED_IDENTITY`        |             | `FALSE`                                                                     |          |
+
+#### Multi-Domain Options
+
+When `DOMAIN_*_HOST` variables are set, the container serves a different `config.json` per virtual host using nginx `map` and `location` snippets. Each domain gets a copy of the base `config.json` with only the per-domain values patched, preserving custom fields like `branding`, `embedded_pages`, etc.
+
+| Variable                        | Description                                         | Advanced |
+| ------------------------------- | --------------------------------------------------- | -------- |
+| `DOMAIN_01_HOST`                | Hostname for this domain (e.g. `talk.tiredofit.ca`) | x        |
+| `DOMAIN_01_URL`                 | Homeserver base URL                                 | x        |
+| `DOMAIN_01_BRAND`               | Brand name                                          | x        |
+| `DOMAIN_01_SERVER_NAME`         | Homeserver server name                              | x        |
+| `DOMAIN_01_PERMALINK_PREFIX`    | Permalink prefix (default: `https://$HOST`)         | x        |
+| `DOMAIN_01_BRANDING_WELCOME_BG` | Welcome background image URL                        | x        |
+| `DOMAIN_01_BRANDING_LOGO`       | Auth header logo URL                                | x        |
+| `DOMAIN_01_WELCOME_URL`         | Embedded welcome page URL                           | x        |
+| `DOMAIN_01_HOME_URL`            | Embedded home page URL                              | x        |
+
+Repeat with `DOMAIN_02_*`, `DOMAIN_03_*` for additional domains (max 3) unless using advanced image.
 
 * * *
 

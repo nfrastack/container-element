@@ -1,0 +1,69 @@
+From: Nfrastack <code@nfrastack.com>
+Date: Thu, 23 Jul 2026 00:00:00 +0000
+Subject: [PATCH]  Fix: timeline messages not rendering after sync
+ optimization
+
+Bug: Commit 15699c557d removed this.setState({ clientSyncState }) from
+the onSync handler to reduce re-renders on every sync pulse. However,
+onRoomTimeline can silently drop live events when:
+  - messagePanel.current is null (panel not mounted yet)
+  - stuckAtBottom is false (user scrolled up)
+
+Without the periodic re-render from onSync, missed events are never
+recovered. They exist in the Matrix SDK's room timeline but never get
+paginated into the TimelineWindow buffer and never appear in React
+state.
+
+Fix: Call forceUpdate() on every sync pulse instead of only when the
+sync state changes. Using forceUpdate() instead of setState() avoids
+the full state reconciliation that the old code triggered, while still
+ensuring render() -> getEvents() runs frequently enough to pick up
+events that onRoomTimeline might have dropped.
+
+Also adds a visibilitychange handler that calls forceUpdate() when the
+tab becomes visible, catching any paints the browser deferred while
+the tab was backgrounded.
+
+diff --git a/apps/web/src/components/structures/TimelinePanel.tsx b/apps/web/src/components/structures/TimelinePanel.tsx
+index 51bce161c7..b3091bcbaa 100644
+--- a/apps/web/src/components/structures/TimelinePanel.tsx
++++ b/apps/web/src/components/structures/TimelinePanel.tsx
+@@ -308,6 +308,7 @@ class TimelinePanel extends React.Component<IProps, IState> {
+         cli.on(MatrixEventEvent.Decrypted, this.onEventDecrypted);
+         cli.on(MatrixEventEvent.Replaced, this.onEventReplaced);
+         cli.on(ClientEvent.Sync, this.onSync);
++        document.addEventListener("visibilitychange", this.onPageVisibilityChange);
+
+         this.props.timelineSet.room?.on(ThreadEvent.Update, this.onThreadUpdate);
+
+@@ -367,6 +368,7 @@ class TimelinePanel extends React.Component<IProps, IState> {
+         }
+
+         dis.unregister(this.dispatcherRef);
++        document.removeEventListener("visibilitychange", this.onPageVisibilityChange);
+
+         const client = MatrixClientPeg.get();
+         if (client) {
+@@ -901,12 +903,19 @@ class TimelinePanel extends React.Component<IProps, IState> {
+     private onSync = (clientSyncState: SyncState, prevState: SyncState | null, data?: object): void => {
+         if (this.unmounted) return;
+         const nextSyncImpliesForwardPaginating = TimelinePanel.isSyncForwardPaginating(clientSyncState);
+-        if (nextSyncImpliesForwardPaginating === this.syncImpliesForwardPaginating) return;
+-
+-        this.syncImpliesForwardPaginating = nextSyncImpliesForwardPaginating;
++        if (nextSyncImpliesForwardPaginating !== this.syncImpliesForwardPaginating) {
++            this.syncImpliesForwardPaginating = nextSyncImpliesForwardPaginating;
++        }
+         this.forceUpdate();
+     };
+
++    private onPageVisibilityChange = (): void => {
++        if (this.unmounted) return;
++        if (document.visibilityState === "visible") {
++            this.forceUpdate();
++        }
++    };
++
+     private static isSyncForwardPaginating(syncState: SyncState | null): boolean {
+         return syncState === SyncState.Prepared || syncState === SyncState.Catchup;
+     }

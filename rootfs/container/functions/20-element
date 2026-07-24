@@ -71,13 +71,13 @@ element_generate_configuration() {
         "url": "https://call.element.io",
         "participant_limit": 8,
         "brand": "Element Call",
-        "exclusive": false,
+        "exclusive": false
     },
 
-    logout_redirect_url: null,
+    "logout_redirect_url": null,
     "sso_redirect_options": {
       "immediate": false,
-      "on_welcome_page": true,
+      "on_welcome_page": true
     },
 
     "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx"

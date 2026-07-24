@@ -19,7 +19,12 @@ LABEL \
 
 ARG \
     ELEMENT_VERSION="v1.12.24" \
-    ELEMENT_REPO_URL="https://github.com/element-hq/element-web"
+    ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
+    BUILD_DATE="2026-07-24"
+
+ENV \
+    IMAGE_NAME="nfrastack/element" \
+    IMAGE_REPO_URL="https://github.com/nfrastack/container-element/"
 
 COPY CHANGELOG.md /usr/src/container/CHANGELOG.md
 COPY LICENSE /usr/src/container/LICENSE
@@ -48,6 +53,9 @@ RUN echo "" && \
                     ELEMENT_BUILD_DEPS \
                     ELEMENT_RUN_DEPS \
                     && \
+    \
+    package build go buildtime && \
+    package build yq && \
     \
     npm install -g pnpm && \
     \

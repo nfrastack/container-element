@@ -14,24 +14,30 @@ element_generate_configuration
 
 generate_domain_config() {
     local in="$1"
-    local host="DOMAIN_${in}_HOST"
-    local url="DOMAIN_${in}_URL"
-    local brand="DOMAIN_${in}_BRAND"
-    local sname="DOMAIN_${in}_SERVER_NAME"
-    local permlink="DOMAIN_${in}_PERMALINK_PREFIX"
-    local wbg="DOMAIN_${in}_BRANDING_WELCOME_BG"
-    local logo="DOMAIN_${in}_BRANDING_LOGO"
-    local wurl="DOMAIN_${in}_WELCOME_URL"
-    local hurl="DOMAIN_${in}_HOME_URL"
+    local host="DOMAIN${in}_HOST"
+    local url="DOMAIN${in}_URL"
+    local brand="DOMAIN${in}_BRAND"
+    local sname="DOMAIN${in}_SERVER_NAME"
+    local permlink="DOMAIN${in}_PERMALINK_PREFIX"
+    local wbg="DOMAIN${in}_BRANDING_WELCOME_BG"
+    local logo="DOMAIN${in}_BRANDING_LOGO"
+    local wurl="DOMAIN${in}_WELCOME_URL"
+    local hurl="DOMAIN${in}_HOME_URL"
 
     local hv="${!host}"
     [ -z "$hv" ] && return
 
+    local base="${CONFIG_PATH}/config.json"
     local cf="${CONFIG_PATH}/config.${hv}.json"
 
     print_debug "Generating config for ${hv}"
 
-    cp "${CONFIG_PATH}/config.json" "$cf"
+    if [ ! -f "$base" ]; then
+        echo '{}' > "$base"
+        chown "${NGINX_USER}:${NGINX_GROUP}" "$base"
+        chmod 644 "$base"
+    fi
+    cp "$base" "$cf"
 
     yq -i '."default_server_config"."m.homeserver"."base_url" = "'"${!url}"'"' "$cf" -o json
     yq -i '."default_server_config"."m.homeserver"."server_name" = "'"${!sname}"'"' "$cf" -o json
@@ -56,7 +62,7 @@ generate_domain_config() {
     echo "    ${hv} /www/html/config.${hv}.json;" >> "$map"
 }
 
-count=$(printenv | sort | grep -c "^DOMAIN[0-9]._HOST")
+count=$(printenv | sort | grep -c "^DOMAIN[0-9][0-9]_HOST")
 if [ "$count" -gt 0 ]; then
     nsd="${NGINX_CONFIG_PATH%/}/sites.enabled/element"
 
@@ -76,7 +82,11 @@ EOF
     write_file "root:root@${location}:644" <<EOF
 
 location = /config.json {
-    alias \$element_config_file;
+    rewrite ^ /__config/\$host last;
+}
+location ~ ^/__config/(.+)$ {
+    internal;
+    alias /config/config.\$1.json;
 }
 EOF
 

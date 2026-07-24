@@ -1,8 +1,10 @@
-## 1.0.0pre 2026-07-07 <code at nfrastack dot com>
+## 1.0.0 2026-07-24 <code at nfrastack dot com>
 
    ### Added
-      - Switch to nfrastack/container-nginx
-      - Element 1.12.23
+      - Element 1.12.24 - Build arg PATCH=TRUE - Switch to false if you do not want to build with the patches/ directory that fix message updating and chatbar sidebars
+      - Multiple HomeServer support served from one container via DOMAINXX environment variables
+      - Switch to nfrastack/nginx base
+      - Alpine 3.24
 
 
 ## 0.6.59 2025-07-30 <dave at tiredofit dot ca>

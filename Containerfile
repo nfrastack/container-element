@@ -20,8 +20,8 @@ LABEL \
 ARG \
     ELEMENT_VERSION="v1.12.24" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
-    BUILD_DATE="2026-07-24"
-
+    PATCH=TRUE 
+    
 ENV \
     IMAGE_NAME="nfrastack/element" \
     IMAGE_REPO_URL="https://github.com/nfrastack/container-element/"
@@ -60,9 +60,11 @@ RUN echo "" && \
     npm install -g pnpm && \
     \
     clone_git_repo "${ELEMENT_REPO_URL}" "${ELEMENT_VERSION}" /usr/src/element-web && \
-    PATCH_VERS="" && \
-    for p in /usr/src/patches/*.patch; do \
-        name=$(basename $p .patch) && \
+    if [ "$PATCH" = "true" ] || [ "$PATCH" = "TRUE" ] || [ "$PATCH" = "True" ] ; then \
+        PATCH_VERS="" ; \
+        for p in /usr/src/patches/*.patch; do \
+            [ -f "$p" ] || continue; \
+           name=$(basename $p .patch) && \
         echo "Applying $name..." && \
         if patch -p1 < "$p"; then \
             echo "  OK" && \
@@ -71,7 +73,8 @@ RUN echo "" && \
             echo "  FAILED" && \
             PATCH_VERS="${PATCH_VERS}+${name}-FAILED"; \
         fi; \
-    done && \
+    done ; \
+    fi && \
     pnpm install && \
     VERSION="${ELEMENT_VERSION}${PATCH_VERS}" pnpm exec nx run apps/web:build && \
     mkdir -p /www/html && \

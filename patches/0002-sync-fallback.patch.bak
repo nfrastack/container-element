@@ -2,46 +2,63 @@ From: Nfrastack <code@nfrastack.com>
 Date: Thu, 23 Jul 2026 00:00:00 +0000
 Subject: [PATCH] Fix: timeline messages not rendering after sync optimization
 
-Fix + debug instrumentation.
+Bug: Commit 15699c557d removed this.setState({ clientSyncState }) from
+the onSync handler to reduce re-renders on every sync pulse. However,
+onRoomTimeline can silently drop live events when:
+  - messagePanel.current is null (panel not mounted yet)
+  - stuckAtBottom is false (user scrolled up)
 
-Enable debuglog output in the webview console via:
-  localStorage.setItem("debug_timeline_panel", "true")
-Then reload. Watch for [DBG] prefixed lines when messages arrive.
+Without the periodic setState from onSync, missed events are never
+recovered. They exist in the Matrix SDK's room timeline but never get
+paginated into the TimelineWindow buffer and so never appear in React
+state.
+
+Furthermore, ClientEvent.Sync only fires on sync state transitions,
+NOT on every sync response. So onSync cannot be relied upon to
+periodically refresh the event list — the fix must happen entirely
+within onRoomTimeline.
+
+Fix:
+1. Always paginate live events into the TimelineWindow buffer in
+onRoomTimeline, even when the panel is not mounted or the user has
+scrolled up. This ensures events are never dropped from the buffer.
+
+2. Call reloadEvents() immediately after each paginate() call in the
+early-return branches, so React state is updated with the buffered
+event right away. This replaces the broken strategy of relying on
+onSync to eventually pick up buffered events.
+
+3. Keep the visibilitychange handler (also calling reloadEvents()) as
+a safety net for paints the browser deferred while backgrounded.
+
+4. Keep the onSync reloadEvents() call since it does help on sync
+state transitions (initial load, reconnect, catchup).
 diff --git a/apps/web/src/components/structures/TimelinePanel.tsx b/apps/web/src/components/structures/TimelinePanel.tsx
 index 51bce161c7..2b29ea6904 100644
 --- a/apps/web/src/components/structures/TimelinePanel.tsx
 +++ b/apps/web/src/components/structures/TimelinePanel.tsx
-@@ -308,6 +308,7 @@
+@@ -306,6 +306,7 @@
+         cli.on(RoomEvent.LocalEchoUpdated, this.onLocalEchoUpdated);
+         cli.on(RoomEvent.AccountData, this.onAccountData);
          cli.on(MatrixEventEvent.Decrypted, this.onEventDecrypted);
++        document.addEventListener("visibilitychange", this.onPageVisibilityChange);
          cli.on(MatrixEventEvent.Replaced, this.onEventReplaced);
          cli.on(ClientEvent.Sync, this.onSync);
-+        document.addEventListener("visibilitychange", this.onPageVisibilityChange);
  
-         this.props.timelineSet.room?.on(ThreadEvent.Update, this.onThreadUpdate);
- 
-@@ -367,6 +368,7 @@
+@@ -366,6 +367,7 @@
+             this.readMarkerActivityTimer = null;
          }
  
-         dis.unregister(this.dispatcherRef);
 +        document.removeEventListener("visibilitychange", this.onPageVisibilityChange);
+         dis.unregister(this.dispatcherRef);
  
          const client = MatrixClientPeg.get();
-         if (client) {
-@@ -662,6 +664,7 @@
-         data: IRoomTimelineData,
-     ): void => {
-         // ignore events for other timeline sets
-+        debuglog("[DBG] onRoomTimeline", "type=" + ev.getType() + " live=" + data?.liveEvent + " tsMatch=" + (data.timeline.getTimelineSet() === this.props.timelineSet));
-         if (data.timeline.getTimelineSet() !== this.props.timelineSet) {
-             return;
-         }
-@@ -683,13 +686,21 @@
+@@ -683,13 +685,19 @@
          // updates from pagination will happen when the paginate completes.
          if (toStartOfTimeline || !data || !data.liveEvent) return;
  
 -        if (!this.messagePanel.current?.getScrollState()) return;
 +        if (!this.messagePanel.current?.getScrollState()) {
-+            debuglog("[DBG] onRoomTimeline: panel not mounted, paginate+reload");
 +            this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false);
 +            this.reloadEvents();
 +            return;
@@ -52,21 +69,12 @@ index 51bce161c7..2b29ea6904 100644
              // events off the other end of the timeline. But we need to note
              // that we can now paginate.
              this.setState({ canForwardPaginate: true });
-+            debuglog("[DBG] onRoomTimeline: not stuck, paginate+reload");
 +            this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false);
 +            this.reloadEvents();
              return;
          }
  
-@@ -702,6 +713,7 @@
-         // timeline window.
-         //
-         // see https://github.com/vector-im/vector-web/issues/1035
-+        debuglog("[DBG] onRoomTimeline: stuck at bottom, normal paginate");
-         this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false).then(() => {
-             if (this.unmounted) {
-                 return;
-@@ -901,10 +913,19 @@
+@@ -901,10 +909,17 @@
      private onSync = (clientSyncState: SyncState, prevState: SyncState | null, data?: object): void => {
          if (this.unmounted) return;
          const nextSyncImpliesForwardPaginating = TimelinePanel.isSyncForwardPaginating(clientSyncState);
@@ -74,7 +82,6 @@ index 51bce161c7..2b29ea6904 100644
 +        if (nextSyncImpliesForwardPaginating !== this.syncImpliesForwardPaginating) {
 +            this.syncImpliesForwardPaginating = nextSyncImpliesForwardPaginating;
 +        }
-+        debuglog("[DBG] onSync: state=" + clientSyncState + " prev=" + prevState);
 +        this.reloadEvents();
 +    };
  
@@ -82,18 +89,9 @@ index 51bce161c7..2b29ea6904 100644
 -        this.forceUpdate();
 +    private onPageVisibilityChange = (): void => {
 +        if (this.unmounted) return;
-+        debuglog("[DBG] visibilityChange=" + document.visibilityState);
 +        if (document.visibilityState === "visible") {
 +            this.reloadEvents();
 +        }
      };
  
      private static isSyncForwardPaginating(syncState: SyncState | null): boolean {
-@@ -1576,6 +1597,7 @@
-         // the results if so.
-         if (this.unmounted) return;
- 
-+        debuglog("[DBG] reloadEvents", "winEvents=" + this.timelineWindow?.getEvents().length);
-         const state = this.getEvents();
-         this.buildLegacyCallEventGroupers(state.events);
-         this.setState(state);

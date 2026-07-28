@@ -18,9 +18,9 @@ LABEL \
         org.opencontainers.image.licenses="MIT"
 
 ARG \
-    ELEMENT_VERSION="v1.12.13" \
+    ELEMENT_VERSION="v1.12.24" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
-    PATCH=FALSE 
+    PATCH=TRUE 
     
 ENV \
     IMAGE_NAME="nfrastack/element" \

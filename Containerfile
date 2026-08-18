@@ -18,7 +18,7 @@ LABEL \
         org.opencontainers.image.licenses="MIT"
 
 ARG \
-    ELEMENT_VERSION="v1.12.25" \
+    ELEMENT_VERSION="v1.12.26" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
     PATCH=TRUE 
     
@@ -60,7 +60,7 @@ RUN echo "" && \
     npm install -g pnpm && \
     \
     clone_git_repo "${ELEMENT_REPO_URL}" "${ELEMENT_VERSION}" /usr/src/element-web && \
-    if [ "$PATCH" = "true" ] || [ "$PATCH" = "TRUE" ] || [ "$PATCH" = "True" ] ; then \
+    if [ "${PATCH,,}" = "true" ]; then \
         PATCH_VERS="" ; \
         for p in /usr/src/patches/*.patch; do \
             [ -f "$p" ] || continue; \

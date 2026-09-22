@@ -57,11 +57,12 @@ RUN echo "" && \
     package build go buildtime && \
     package build yq && \
     \
-    npm install -g pnpm && \
+    npm install -g pnpm@11.23.0 && \
     \
     clone_git_repo "${ELEMENT_REPO_URL}" "${ELEMENT_VERSION}" /usr/src/element-web && \
+    cd /usr/src/element-web && \
+    PATCH_VERS="" && \
     if [ "${PATCH,,}" = "true" ]; then \
-        PATCH_VERS="" ; \
         for p in /usr/src/patches/*.patch; do \
             [ -f "$p" ] || continue; \
            name=$(basename $p .patch) && \

@@ -1,49 +1,74 @@
 From: Nfrastack <code@nfrastack.com>
-Date: Thu, 23 Jul 2026 00:00:00 +0000
-Subject: [PATCH] Fix: timeline messages not rendering after sync optimization
+Date: Wed, 23 Sep 2026 00:00:00 +0000
+Subject: [PATCH] Fix: timeline misses live messages after sync optimization
 
-Fix + debug instrumentation.
+Bug: Upstream #33268 (v1.12.x) removed the per-sync setState from the
+onSync handler to reduce re-renders. Since then, any live event dropped
+by onRoomTimeline's early-return branches is never recovered:
+  - messagePanel not mounted yet -> `return` without paginating
+  - stuckAtBottom false -> set canForwardPaginate, `return` without
+    paginating into the TimelineWindow buffer
 
-Enable debuglog output in the webview console via:
-  localStorage.setItem("debug_timeline_panel", "true")
-Then reload. Watch for [DBG] prefixed lines when messages arrive.
+ClientEvent.Sync only re-renders on PREPARED/CATCHUP transitions, so a
+missed event sits in the SDK room timeline but never reaches React
+state. Symptom: an open DM shows every message except the newest; the
+newest only appears once a further message arrives (off-by-one).
+
+This is triggered easily when stuckAtBottom is misdetected: the 1px
+tolerance in ScrollPanel.isAtBottom breaks under tiling WMs (Hyprland),
+Electron wrappers (Ferdium) and fractional scaling (see 0003), so a
+visually-pinned timeline reports "scrolled up" and every live message
+takes the early-return path.
+
+Fix (regenerated against v1.12.29; the previous revision of this patch
+no longer applied - hunk FAILED - so the built image shipped unpatched):
+1. Always advance the TimelineWindow buffer in onRoomTimeline, even on
+   the early-return paths (fire-and-forget paginate, no setState, so a
+   genuinely scrolled-up view is preserved).
+2. Steady-state sync recovery: on SYNCING pulses, if we know forward
+   history exists, paginate it into the window and reloadEvents() once
+   the paginate completes (correctly chained via .then(), not read
+   synchronously before the paginate lands).
+3. visibilitychange + window focus safety net for paints deferred while
+   a tab was hidden/unfocused (common under Ferdium).
+
 diff --git a/apps/web/src/components/structures/TimelinePanel.tsx b/apps/web/src/components/structures/TimelinePanel.tsx
-index 51bce161c7..2b29ea6904 100644
+index b19d394..9c2f21d 100644
 --- a/apps/web/src/components/structures/TimelinePanel.tsx
 +++ b/apps/web/src/components/structures/TimelinePanel.tsx
-@@ -308,6 +308,7 @@
+@@ -312,6 +312,10 @@ class TimelinePanel extends React.Component<IProps, IState> {
          cli.on(MatrixEventEvent.Decrypted, this.onEventDecrypted);
          cli.on(MatrixEventEvent.Replaced, this.onEventReplaced);
          cli.on(ClientEvent.Sync, this.onSync);
++        // NFRAPATCH: browsers/Electron throttle background tabs and may defer
++        // paints while hidden. Re-sync the view when the user comes back.
 +        document.addEventListener("visibilitychange", this.onPageVisibilityChange);
++        window.addEventListener("focus", this.onWindowFocus);
  
          this.props.timelineSet.room?.on(ThreadEvent.Update, this.onThreadUpdate);
  
-@@ -367,6 +368,7 @@
+@@ -375,6 +379,9 @@ class TimelinePanel extends React.Component<IProps, IState> {
          }
  
          dis.unregister(this.dispatcherRef);
++        // NFRAPATCH: paired with the listeners added in componentDidMount.
 +        document.removeEventListener("visibilitychange", this.onPageVisibilityChange);
++        window.removeEventListener("focus", this.onWindowFocus);
  
          const client = MatrixClientPeg.get();
          if (client) {
-@@ -662,6 +664,7 @@
-         data: IRoomTimelineData,
-     ): void => {
-         // ignore events for other timeline sets
-+        debuglog("[DBG] onRoomTimeline", "type=" + ev.getType() + " live=" + data?.liveEvent + " tsMatch=" + (data.timeline.getTimelineSet() === this.props.timelineSet));
-         if (data.timeline.getTimelineSet() !== this.props.timelineSet) {
-             return;
-         }
-@@ -683,13 +686,21 @@
+@@ -691,13 +698,27 @@ class TimelinePanel extends React.Component<IProps, IState> {
          // updates from pagination will happen when the paginate completes.
          if (toStartOfTimeline || !data || !data.liveEvent) return;
  
 -        if (!this.messagePanel.current?.getScrollState()) return;
 +        if (!this.messagePanel.current?.getScrollState()) {
-+            debuglog("[DBG] onRoomTimeline: panel not mounted, paginate+reload");
-+            this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false);
-+            this.reloadEvents();
++            // NFRAPATCH: panel not mounted yet (or torn down during room
++            // switch). Advance the TimelineWindow buffer fire-and-forget so
++            // the event is not lost; the next load/reload picks it up.
++            // Deliberately no reloadEvents() here: there is nothing to render
++            // into yet.
++            void this.timelineWindow?.paginate(EventTimeline.FORWARDS, 1, false);
 +            return;
 +        }
  
@@ -52,48 +77,61 @@ index 51bce161c7..2b29ea6904 100644
              // events off the other end of the timeline. But we need to note
              // that we can now paginate.
              this.setState({ canForwardPaginate: true });
-+            debuglog("[DBG] onRoomTimeline: not stuck, paginate+reload");
-+            this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false);
-+            this.reloadEvents();
++            // NFRAPATCH: still advance the TimelineWindow buffer so the event
++            // is not dropped from the window. React state stays untouched
++            // (preserving the scrolled-up view); the buffered event is
++            // rendered on the next forward-fill / jump-to-bottom / sync
++            // recovery pass.
++            void this.timelineWindow?.paginate(EventTimeline.FORWARDS, 1, false);
              return;
          }
  
-@@ -702,6 +713,7 @@
-         // timeline window.
-         //
-         // see https://github.com/vector-im/vector-web/issues/1035
-+        debuglog("[DBG] onRoomTimeline: stuck at bottom, normal paginate");
-         this.timelineWindow!.paginate(EventTimeline.FORWARDS, 1, false).then(() => {
-             if (this.unmounted) {
-                 return;
-@@ -901,10 +913,19 @@
+@@ -909,10 +930,45 @@ class TimelinePanel extends React.Component<IProps, IState> {
      private onSync = (clientSyncState: SyncState, prevState: SyncState | null, data?: object): void => {
          if (this.unmounted) return;
          const nextSyncImpliesForwardPaginating = TimelinePanel.isSyncForwardPaginating(clientSyncState);
 -        if (nextSyncImpliesForwardPaginating === this.syncImpliesForwardPaginating) return;
 +        if (nextSyncImpliesForwardPaginating !== this.syncImpliesForwardPaginating) {
 +            this.syncImpliesForwardPaginating = nextSyncImpliesForwardPaginating;
++            this.forceUpdate();
++            return;
 +        }
-+        debuglog("[DBG] onSync: state=" + clientSyncState + " prev=" + prevState);
-+        this.reloadEvents();
++        // NFRAPATCH: steady-state recovery for live events missed while
++        // scrolled up (or while stuckAtBottom was misdetected, e.g. 1px
++        // tolerance under fractional scaling). Upstream #33268 removed the
++        // per-sync setState, so without this nothing re-renders/paginates
++        // until the next PREPARED/CATCHUP transition. If we know forward
++        // history exists, pull it into the window and re-render once the
++        // paginate completes.
++        if (
++            clientSyncState === SyncState.Syncing &&
++            this.state.canForwardPaginate &&
++            !this.state.forwardPaginating &&
++            this.timelineWindow?.canPaginate(EventTimeline.FORWARDS)
++        ) {
++            void this.timelineWindow.paginate(EventTimeline.FORWARDS, 1, false).then(() => {
++                if (this.unmounted) return;
++                this.reloadEvents();
++            });
++        }
 +    };
  
 -        this.syncImpliesForwardPaginating = nextSyncImpliesForwardPaginating;
 -        this.forceUpdate();
++    // NFRAPATCH: safety net for paints the browser deferred while the tab
++    // was hidden / the window unfocused (common under Electron wrappers
++    // like Ferdium). reloadEvents() re-reads the already-advanced
++    // TimelineWindow buffer into React state.
 +    private onPageVisibilityChange = (): void => {
 +        if (this.unmounted) return;
-+        debuglog("[DBG] visibilityChange=" + document.visibilityState);
 +        if (document.visibilityState === "visible") {
 +            this.reloadEvents();
 +        }
++    };
++
++    private onWindowFocus = (): void => {
++        if (this.unmounted) return;
++        this.reloadEvents();
      };
  
      private static isSyncForwardPaginating(syncState: SyncState | null): boolean {
-@@ -1576,6 +1597,7 @@
-         // the results if so.
-         if (this.unmounted) return;
- 
-+        debuglog("[DBG] reloadEvents", "winEvents=" + this.timelineWindow?.getEvents().length);
-         const state = this.getEvents();
-         this.buildLegacyCallEventGroupers(state.events);
-         this.setState(state);

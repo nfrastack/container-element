@@ -1,0 +1,186 @@
+From: Nfrastack <code@nfrastack.com>
+Date: Wed, 23 Sep 2026 00:00:00 +0000
+Subject: [PATCH] Fix: notification settings cannot be saved when server lacks default push rules
+
+Bug: Saving any notification setting 404s with M_NOT_FOUND
+("Push rule not found") on homeservers whose push-ruleset lacks
+server-default rules such as .m.rule.contains_display_name,
+.m.rule.contains_user_name or .m.rule.roomnotif. reconcile always emits
+those as "updated" entries, and applyChanges only ever calls
+setPushRuleEnabled/setPushRuleActions, which require the rule to already
+exist - so every save fails and the whole reconciliation is rejected.
+
+Fix: on M_NOT_FOUND, (re)create the missing rule with addPushRule from
+its spec-stable template (conditions/pattern; the failing rule IDs are
+all long-frozen defaults), then apply the requested enabled/actions on
+top, so the created rule converges to exactly what the settings UI asked
+for. Rules without a known template still throw as before.
+
+diff --git a/apps/web/src/hooks/useNotificationSettings.ts b/apps/web/src/hooks/useNotificationSettings.ts
+index 657ecab..c83b588 100644
+--- a/apps/web/src/hooks/useNotificationSettings.ts
++++ b/apps/web/src/hooks/useNotificationSettings.ts
+@@ -6,28 +6,151 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Com
+ Please see LICENSE files in the repository root for full details.
+ */
+ 
+-import { type IPushRules, type MatrixClient } from "matrix-js-sdk/src/matrix";
++import {
++    ConditionKind,
++    type IPushRule,
++    type IPushRules,
++    type MatrixClient,
++    PushRuleKind,
++    RuleId,
++} from "matrix-js-sdk/src/matrix";
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { logger } from "matrix-js-sdk/src/logger";
+ 
+ import { type NotificationSettings } from "../models/notificationsettings/NotificationSettings";
+-import { type PushRuleDiff } from "../models/notificationsettings/PushRuleDiff";
++import {
++    type PushRuleDiff,
++    type PushRuleUpdate,
++} from "../models/notificationsettings/PushRuleDiff";
+ import { reconcileNotificationSettings } from "../models/notificationsettings/reconcileNotificationSettings";
+ import { toNotificationSettings } from "../models/notificationsettings/toNotificationSettings";
+ 
++// NFRAPATCH: spec-stable bodies (conditions/pattern) for the server-default
++// rules, used to (re)create them when a homeserver does not have them and
++// setPushRuleEnabled/setPushRuleActions therefore 404 with M_NOT_FOUND.
++// Actions/enabled always come from the reconciled diff, so the created rule
++// converges to exactly what the settings UI asked for.
++function standardRuleTemplate(
++    ruleId: string,
++    kind: PushRuleKind,
++    userId: string,
++    localpart: string,
++): Pick<IPushRule, "conditions" | "pattern"> | null {
++    if (kind === PushRuleKind.Override) {
++        switch (ruleId) {
++            case RuleId.Master:
++                return { conditions: [] };
++            case RuleId.SuppressNotices:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.EventMatch, key: "content.msgtype", pattern: "m.notice" },
++                    ],
++                };
++            case RuleId.InviteToSelf:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.member" },
++                        { kind: ConditionKind.EventMatch, key: "content.membership", pattern: "invite" },
++                        { kind: ConditionKind.EventMatch, key: "state_key", pattern: userId },
++                    ],
++                };
++            case RuleId.MemberEvent:
++                return {
++                    conditions: [{ kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.member" }],
++                };
++            case RuleId.ContainsDisplayName:
++                return { conditions: [{ kind: ConditionKind.ContainsDisplayName }] };
++            case RuleId.AtRoomNotification:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.EventMatch, key: "content.body", pattern: "@room" },
++                        { kind: ConditionKind.SenderNotificationPermission, key: "room" },
++                    ],
++                };
++            case RuleId.Tombstone:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.tombstone" },
++                        { kind: ConditionKind.EventMatch, key: "state_key", pattern: "" },
++                    ],
++                };
++            default:
++                return null;
++        }
++    }
++    if (kind === PushRuleKind.ContentSpecific && ruleId === RuleId.ContainsUserName) {
++        return { pattern: localpart };
++    }
++    if (kind === PushRuleKind.Underride) {
++        switch (ruleId) {
++            case RuleId.Message:
++                return {
++                    conditions: [{ kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.message" }],
++                };
++            case RuleId.EncryptedMessage:
++                return {
++                    conditions: [{ kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.encrypted" }],
++                };
++            case RuleId.DM:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.RoomMemberCount, is: "2" },
++                        { kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.message" },
++                    ],
++                };
++            case RuleId.EncryptedDM:
++                return {
++                    conditions: [
++                        { kind: ConditionKind.RoomMemberCount, is: "2" },
++                        { kind: ConditionKind.EventMatch, key: "type", pattern: "m.room.encrypted" },
++                    ],
++                };
++            default:
++                return null;
++        }
++    }
++    return null;
++}
++
++async function applyUpdate(cli: MatrixClient, change: PushRuleUpdate): Promise<void> {
++    try {
++        if (change.enabled !== undefined) {
++            await cli.setPushRuleEnabled("global", change.kind, change.rule_id, change.enabled);
++        }
++        if (change.actions !== undefined) {
++            await cli.setPushRuleActions("global", change.kind, change.rule_id, change.actions);
++        }
++    } catch (err) {
++        // NFRAPATCH: the rule does not exist server-side (some homeservers
++        // lack server-default rules such as .m.rule.contains_display_name, so
++        // enabling them 404s with M_NOT_FOUND and no notification setting can
++        // ever be saved). Recreate the rule from its standard template, then
++        // apply the requested enabled/actions on top of it.
++        const userId = cli.getUserId();
++        const localpart = cli.getUserIdLocalpart();
++        const template =
++            userId && localpart ? standardRuleTemplate(change.rule_id, change.kind, userId, localpart) : null;
++        if ((err as { errcode?: string })?.errcode !== "M_NOT_FOUND" || !template) {
++            throw err;
++        }
++        logger.warn(`Push rule ${change.rule_id} missing server-side; creating it`, err);
++        await cli.addPushRule("global", change.kind, change.rule_id as Exclude<string, RuleId>, {
++            actions: change.actions ?? [],
++            ...template,
++        });
++        if (change.enabled !== undefined) {
++            await cli.setPushRuleEnabled("global", change.kind, change.rule_id, change.enabled);
++        }
++        if (change.actions !== undefined) {
++            await cli.setPushRuleActions("global", change.kind, change.rule_id, change.actions);
++        }
++    }
++}
++
+ async function applyChanges(cli: MatrixClient, changes: PushRuleDiff): Promise<void> {
+     await Promise.all(changes.deleted.map((change) => cli.deletePushRule("global", change.kind, change.rule_id)));
+     await Promise.all(changes.added.map((change) => cli.addPushRule("global", change.kind, change.rule_id, change)));
+-    await Promise.all(
+-        changes.updated.map(async (change) => {
+-            if (change.enabled !== undefined) {
+-                await cli.setPushRuleEnabled("global", change.kind, change.rule_id, change.enabled);
+-            }
+-            if (change.actions !== undefined) {
+-                await cli.setPushRuleActions("global", change.kind, change.rule_id, change.actions);
+-            }
+-        }),
+-    );
++    await Promise.all(changes.updated.map((change) => applyUpdate(cli, change)));
+ }
+ 
+ type UseNotificationSettings = {

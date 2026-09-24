@@ -1,0 +1,36 @@
+From: Nfrastack <code@nfrastack.com>
+Date: Wed, 23 Sep 2026 00:00:00 +0000
+Subject: [PATCH] Fix: stuck-at-bottom misdetected under tiling WMs / Ferdium
+
+Bug: ScrollPanel.isAtBottom() treats the timeline as "at bottom" only
+when scrollHeight - (scrollTop + clientHeight) <= 1px. Under Hyprland,
+Ferdium (Electron) and fractional scaling the scroll position routinely
+rests 2-9px off the true bottom while looking pinned (sub-pixel
+rounding, custom themes, deferred layout). TimelinePanel then takes the
+"user scrolled up" branch for every live message: it sets
+canForwardPaginate and returns without rendering, so an open chat never
+shows the newest message until something else forces a re-render.
+
+Fix: widen the tolerance to 10px. Still small enough that a deliberate
+scroll-up (dozens of px) is honoured, but absorbs rounding jitter from
+WMs, wrappers and scaled displays.
+
+diff --git a/apps/web/src/components/structures/ScrollPanel.tsx b/apps/web/src/components/structures/ScrollPanel.tsx
+index fc6ae11..36d0712 100644
+--- a/apps/web/src/components/structures/ScrollPanel.tsx
++++ b/apps/web/src/components/structures/ScrollPanel.tsx
+@@ -270,7 +270,13 @@ export default class ScrollPanel extends React.Component<IProps> {
+         // actually lead to scrollTop+clientHeight being *larger* than
+         // scrollHeight. (observed in element-desktop on Ubuntu 20.04)
+         //
+-        return sn.scrollHeight - (sn.scrollTop + sn.clientHeight) <= 1;
++        // NFRAPATCH: widened from 1px to 10px. Tiling WMs (Hyprland),
++        // Electron wrappers (Ferdium) and fractional scaling routinely leave
++        // the scroll 2-9px off the true bottom while looking pinned. With a
++        // 1px tolerance TimelinePanel thinks the user scrolled up and stops
++        // appending live messages until something forces a re-render.
++        //
++        return sn.scrollHeight - (sn.scrollTop + sn.clientHeight) <= 10;
+     };
+ 
+     // returns the vertical height in the given direction that can be removed from

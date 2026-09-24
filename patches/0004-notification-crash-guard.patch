@@ -1,0 +1,135 @@
+From: Nfrastack <code@nfrastack.com>
+Date: Wed, 23 Sep 2026 00:00:00 +0000
+Subject: [PATCH] Fix: broken Notification API kills live timeline updates
+
+Bug: In wrappers with a broken Notification implementation (Ferdium with
+a missing/broken recipe preload throws "TypeError: Illegal invocation"
+from `new window.Notification(...)`), every incoming message that
+qualifies for a popup notification crashes inside
+Notifier.evaluateEvent -> displayPopupNotification ->
+BasePlatform.displayNotification.
+
+Because matrix-js-sdk's event emitter does not catch listener
+exceptions, the throw aborts the RoomEvent.Timeline emit, so listeners
+registered after Notifier - notably TimelinePanel.onRoomTimeline - never
+run for that event. The message sits in the SDK timeline but is never
+paginated into the view: an open DM shows everything except the newest
+message.
+
+Fix: catch construction/presentation failures in
+BasePlatform.displayNotification and return null, which Notifier already
+handles (it just skips tracking the popup for later clearing). No popup,
+but the timeline keeps working. The Electron override is updated for the
+widened return type.
+
+diff --git a/apps/web/src/BasePlatform.ts b/apps/web/src/BasePlatform.ts
+index 290c4f3..817c966 100644
+--- a/apps/web/src/BasePlatform.ts
++++ b/apps/web/src/BasePlatform.ts
+@@ -207,40 +207,53 @@ export default abstract class BasePlatform {
+         avatarUrl: string | null,
+         room: Room,
+         ev?: MatrixEvent,
+-    ): Notification {
+-        const notifBody: NotificationOptions = {
+-            body: msg,
+-            silent: true, // we play our own sounds
+-        };
+-        if (avatarUrl) notifBody["icon"] = avatarUrl;
+-        const notification = new window.Notification(title, notifBody);
+-
+-        notification.onclick = () => {
+-            const payload: ViewRoomPayload = {
+-                action: Action.ViewRoom,
+-                room_id: room.roomId,
+-                metricsTrigger: "Notification",
++    ): Notification | null {
++        // NFRAPATCH: some wrappers (e.g. Ferdium/Electron webviews with a
++        // broken recipe preload) ship a Notification implementation that
++        // throws "TypeError: Illegal invocation" on construction. That
++        // exception used to propagate through Notifier.evaluateEvent and
++        // abort the RoomEvent.Timeline emit, so TimelinePanel never saw the
++        // event and the newest message silently never rendered. Swallow it
++        // here and report null (which Notifier already handles): no popup,
++        // but the timeline keeps working.
++        try {
++            const notifBody: NotificationOptions = {
++                body: msg,
++                silent: true, // we play our own sounds
+             };
++            if (avatarUrl) notifBody["icon"] = avatarUrl;
++            const notification = new window.Notification(title, notifBody);
++
++            notification.onclick = () => {
++                const payload: ViewRoomPayload = {
++                    action: Action.ViewRoom,
++                    room_id: room.roomId,
++                    metricsTrigger: "Notification",
++                };
++
++                if (ev?.getThread()) {
++                    payload.event_id = ev.getId();
++                }
++
++                dis.dispatch(payload);
++                window.focus();
++            };
+ 
+-            if (ev?.getThread()) {
+-                payload.event_id = ev.getId();
+-            }
+-
+-            dis.dispatch(payload);
+-            window.focus();
+-        };
++            const closeHandler = (): void => notification.close();
+ 
+-        const closeHandler = (): void => notification.close();
++            // Clear a notification from a redacted event.
++            if (ev) {
++                ev.once(MatrixEventEvent.BeforeRedaction, closeHandler);
++                notification.onclose = () => {
++                    ev.off(MatrixEventEvent.BeforeRedaction, closeHandler);
++                };
++            }
+ 
+-        // Clear a notification from a redacted event.
+-        if (ev) {
+-            ev.once(MatrixEventEvent.BeforeRedaction, closeHandler);
+-            notification.onclose = () => {
+-                ev.off(MatrixEventEvent.BeforeRedaction, closeHandler);
+-            };
++            return notification;
++        } catch (e) {
++            logger.warn("displayNotification failed; skipping popup notification", e);
++            return null;
+         }
+-
+-        return notification;
+     }
+ 
+     public loudNotification(ev: MatrixEvent, room: Room): void {}
+diff --git a/apps/web/src/vector/platform/ElectronPlatform.tsx b/apps/web/src/vector/platform/ElectronPlatform.tsx
+index b81ff40..aaa8630 100644
+--- a/apps/web/src/vector/platform/ElectronPlatform.tsx
++++ b/apps/web/src/vector/platform/ElectronPlatform.tsx
+@@ -335,7 +335,7 @@ export default class ElectronPlatform extends BasePlatform {
+         avatarUrl: string,
+         room: Room,
+         ev?: MatrixEvent,
+-    ): Notification {
++    ): Notification | null {
+         // GNOME notification spec parses HTML tags for styling...
+         // Electron Docs state all supported linux notification systems follow this markup spec
+         // https://github.com/electron/electron/blob/master/docs/tutorial/desktop-environment-integration.md#linux
+@@ -348,6 +348,10 @@ export default class ElectronPlatform extends BasePlatform {
+ 
+         const notification = super.displayNotification(title, msg, avatarUrl, room, ev);
+ 
++        // NFRAPATCH: the base implementation returns null when the
++        // Notification API is broken (see BasePlatform); just skip the popup.
++        if (!notification) return null;
++
+         const handler = notification.onclick as () => void;
+         notification.onclick = (): void => {
+             handler?.();

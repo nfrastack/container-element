@@ -18,7 +18,7 @@ LABEL \
         org.opencontainers.image.licenses="MIT"
 
 ARG \
-    ELEMENT_VERSION="v1.12.29" \
+    ELEMENT_VERSION="v1.12.30" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
     PATCH=TRUE 
     
@@ -76,6 +76,8 @@ RUN echo "" && \
         fi; \
     done ; \
     fi && \
+    rm -rf apps/desktop/package.json.orig && cp apps/desktop/package.json apps/desktop/package.json.orig && \
+    node -e "const fs=require('fs');const p='apps/desktop/package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.scripts=j.scripts||{};j.scripts['sane-postinstall']='echo skipping desktop sane-postinstall';fs.writeFileSync(p,JSON.stringify(j,null,2));console.log('neutralized apps/desktop sane-postinstall');" && \
     pnpm install && \
     VERSION="${ELEMENT_VERSION}${PATCH_VERS}" pnpm exec nx run apps/web:build && \
     mkdir -p /www/html && \

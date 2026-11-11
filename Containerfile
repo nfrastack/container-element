@@ -18,7 +18,7 @@ LABEL \
         org.opencontainers.image.licenses="MIT"
 
 ARG \
-    ELEMENT_VERSION="v1.12.33" \
+    ELEMENT_VERSION="v1.12.34" \
     ELEMENT_REPO_URL="https://github.com/element-hq/element-web" \
     PATCH=TRUE 
     

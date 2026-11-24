@@ -1,3 +1,9 @@
+## 1.0.1 2026-11-24 <code at nfrastack dot com>
+
+   ### Added
+      - Element 1.12.36
+
+
 ## 1.0.0 2026-07-24 <code at nfrastack dot com>
 
    ### Added
